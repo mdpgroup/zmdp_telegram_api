@@ -1,0 +1,205 @@
+class ZCL_TELEGRAM_API definition
+  public
+  final
+  create public .
+
+public section.
+
+  data TOKEN type STRING value '##TOKEN##' ##NO_TEXT.
+  data CHAT_ID type STRING .
+  data TEXT type STRING .
+  data OFFSET type STRING .
+  data:
+    MESSAGES TYPE STANDARD TABLE OF ZGETMESSAGES .
+  data LINK type STRING value 'https://api.telegram.org/' ##NO_TEXT.
+
+  methods GET_MESSAGE .
+  methods SEND_MESSAGE .
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+    METHODS: DEGISTIR CHANGING TEXT TYPE C.
+    METHODS: TARIH_CEVIRICI IMPORTING GMTIME TYPE C
+                            EXPORTING ASC_DATE TYPE dats
+                                      ASC_TIME type char6.
+
+ENDCLASS.
+
+
+
+CLASS ZCL_TELEGRAM_API IMPLEMENTATION.
+
+
+  METHOD DEGISTIR.
+    REPLACE ALL OCCURRENCES OF '\u011f' IN TEXT WITH 'ğ' .
+    REPLACE ALL OCCURRENCES OF '\u011e' IN TEXT WITH 'Ğ' .
+    REPLACE ALL OCCURRENCES OF '\u0131' IN TEXT WITH 'ı' .
+    REPLACE ALL OCCURRENCES OF '\u0130' IN TEXT WITH 'İ' .
+    REPLACE ALL OCCURRENCES OF '\u00f6' IN TEXT WITH 'ö' .
+    REPLACE ALL OCCURRENCES OF '\u00d6' IN TEXT WITH 'Ö' .
+    REPLACE ALL OCCURRENCES OF '\u00fc' IN TEXT WITH 'ü' .
+    REPLACE ALL OCCURRENCES OF '\u00dc' IN TEXT WITH 'Ü' .
+    REPLACE ALL OCCURRENCES OF '\u015f' IN TEXT WITH 'ş' .
+    REPLACE ALL OCCURRENCES OF '\u015e' IN TEXT WITH 'Ş' .
+    REPLACE ALL OCCURRENCES OF '\u00e7' IN TEXT WITH 'ç' .
+    REPLACE ALL OCCURRENCES OF '\u00c7' IN TEXT WITH 'Ç' .
+  ENDMETHOD.
+
+
+  METHOD GET_MESSAGE.
+
+    DATA:   HTTP_CLIENT  TYPE REF TO IF_HTTP_CLIENT,
+            JSON_MESSAGE TYPE STRING.
+
+    CONCATENATE LINK 'bot' TOKEN '/getUpdates' INTO LINK.
+
+    CALL METHOD CL_HTTP_CLIENT=>CREATE_BY_URL
+      EXPORTING
+        URL                = LINK
+      IMPORTING
+        CLIENT             = HTTP_CLIENT
+      EXCEPTIONS
+        ARGUMENT_NOT_FOUND = 1
+        PLUGIN_NOT_ACTIVE  = 2
+        INTERNAL_ERROR     = 3
+        OTHERS             = 4.
+
+    HTTP_CLIENT->REQUEST->SET_HEADER_FIELD( NAME  = '~request_method'
+    VALUE = 'GET' ).
+*       Send the request
+    HTTP_CLIENT->SEND( ).
+
+*       Reterive the result
+    CALL METHOD HTTP_CLIENT->RECEIVE
+      EXCEPTIONS
+        HTTP_COMMUNICATION_FAILURE = 1
+        HTTP_INVALID_STATE         = 2
+        HTTP_PROCESSING_FAILED     = 3
+        OTHERS                     = 4.
+
+    JSON_MESSAGE = HTTP_CLIENT->RESPONSE->GET_CDATA( ).
+
+    DATA : CL_JSON_DE       TYPE REF TO ZCL_MDP_JSON_DESERIALIZER .
+    DATA : LT_NODE          TYPE REF TO ZCL_MDP_JSON_NODE .
+    DATA : LT_NODE_MESSAGE  TYPE REF TO ZCL_MDP_JSON_NODE .
+    DATA : LT_NODE_CHAT     TYPE REF TO ZCL_MDP_JSON_NODE .
+    DATA : LT_NODE_VALUE    TYPE REF TO ZCL_MDP_JSON_NODE .
+    DATA : LS_NODE          TYPE        ZCL_MDP_JSON_NODE=>TYP_ARRAY_CHILDREN .
+    DATA GS_MESSAGES        TYPE        ZMDP_TELEGRAM_S001.
+
+    CREATE OBJECT CL_JSON_DE .
+
+    CL_JSON_DE->DESERIALIZE( EXPORTING JSON = JSON_MESSAGE
+                             IMPORTING NODE = LT_NODE ).
+
+
+    DATA : LO_OBJLIST TYPE REF TO CL_OBJECT_COLLECTION .
+
+    LT_NODE->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'result'
+                                    RECEIVING NODE = LT_NODE  ).
+
+    LOOP AT LT_NODE->ARRAY_CHILDREN INTO LS_NODE.
+
+      LS_NODE-NODE->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'message'
+                                           RECEIVING NODE = LT_NODE_MESSAGE  ).
+
+      LT_NODE_MESSAGE->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'text'
+                                              RECEIVING NODE = LT_NODE_VALUE ).
+
+      GS_MESSAGES-TEXT = LT_NODE_VALUE->VALUE.
+      DEGISTIR( CHANGING TEXT = GS_MESSAGES-TEXT ).
+
+      LT_NODE_MESSAGE->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'chat'
+                                              RECEIVING NODE = LT_NODE_CHAT ).
+
+      LT_NODE_CHAT->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'id'
+                                           RECEIVING NODE = LT_NODE_VALUE ).
+
+      GS_MESSAGES-CHAT_ID = LT_NODE_VALUE->VALUE.
+
+      LT_NODE_CHAT->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'first_name'
+                                           RECEIVING NODE = LT_NODE_VALUE ).
+
+      GS_MESSAGES-FIRST_NAME = LT_NODE_VALUE->VALUE.
+      DEGISTIR( CHANGING TEXT = GS_MESSAGES-FIRST_NAME ).
+
+      LT_NODE_CHAT->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'last_name'
+                                           RECEIVING NODE = LT_NODE_VALUE ).
+
+      GS_MESSAGES-LAST_NAME = LT_NODE_VALUE->VALUE.
+      DEGISTIR( CHANGING TEXT = GS_MESSAGES-LAST_NAME ).
+
+      LT_NODE_CHAT->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'username'
+                                           RECEIVING NODE = LT_NODE_VALUE ).
+
+      GS_MESSAGES-USER_NAME = LT_NODE_VALUE->VALUE.
+
+      LT_NODE_MESSAGE->OBJECT_GET_CHILD_NODE( EXPORTING KEY = 'date'
+                                        RECEIVING NODE = LT_NODE_VALUE ).
+      data: yil type dats,
+           saat(6).
+      GS_MESSAGES-DATE = LT_NODE_VALUE->VALUE.
+      TARIH_CEVIRICI( EXPORTING GMTIME = GS_MESSAGES-DATE
+                      IMPORTING ASC_DATE = yil ASC_TIME = saat ).
+      CONCATENATE yil ' ' saat into GS_MESSAGES-DATE .
+
+      APPEND GS_MESSAGES TO MESSAGES.
+    ENDLOOP.
+
+    BREAK-POINT.
+
+  ENDMETHOD.
+
+
+  METHOD SEND_MESSAGE.
+
+  ENDMETHOD.
+
+
+  METHOD TARIH_CEVIRICI.
+
+    DATA: OPCODE         TYPE X,
+          UNIQUE, NOT_FOUND,
+          TIMESTAMP      TYPE I,
+          DATE           TYPE D,
+          TIME           TYPE T,
+          TZ             LIKE SY-ZONLO,
+          TIMESTRING(10),
+          ABAPSTAMP(14),
+          ABAPTSTAMP     TYPE TIMESTAMP.
+
+    TIMESTAMP =  GMTIME.
+    IF SY-ZONLO = SPACE.
+* Der Benutzer hat keine Zeitzone gepflegt: nehme lokale des App. Srv.
+      CALL FUNCTION 'TZON_GET_OS_TIMEZONE'
+        IMPORTING
+          EF_TIMEZONE   = TZ
+          EF_NOT_UNIQUE = UNIQUE
+          EF_NOT_FOUND  = NOT_FOUND.
+      IF UNIQUE = 'X' OR NOT_FOUND = 'X'.          .
+        TZ = SY-TZONE.
+        CONCATENATE 'UTC+' TZ INTO TZ.
+      ENDIF.
+    ELSE.
+      TZ = SY-ZONLO.
+    ENDIF.
+* wandle den Timestamp in ABAP Format um und lass den ABAP konvertieren
+    OPCODE = 3.
+    CALL 'RstrDateConv'
+      ID 'OPCODE' FIELD OPCODE
+      ID 'TIMESTAMP' FIELD TIMESTAMP
+      ID 'ABAPSTAMP' FIELD ABAPSTAMP.
+    ABAPTSTAMP = ABAPSTAMP.
+    CONVERT TIME STAMP ABAPTSTAMP TIME ZONE TZ INTO DATE DATE
+      TIME TIME.
+    IF SY-SUBRC <> 0.
+      DATE = ABAPSTAMP(8).
+      TIME = ABAPSTAMP+8.
+    ENDIF.
+
+
+    MOVE TIME TO ASC_TIME.
+    MOVE DATE TO ASC_DATE.
+
+  ENDMETHOD.
+ENDCLASS.
